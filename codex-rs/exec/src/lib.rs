@@ -10,6 +10,9 @@ mod event_processor_with_human_output;
 pub(crate) mod event_processor_with_jsonl_output;
 pub(crate) mod exec_events;
 
+use chrono::DateTime;
+use chrono::Local;
+use chrono::Utc;
 pub use cli::Cli;
 pub use cli::Command;
 pub use cli::ReviewArgs;
@@ -21,10 +24,15 @@ use codex_app_server_client::InProcessClientStartArgs;
 use codex_app_server_client::InProcessServerEvent;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::ConfigWarningNotification;
+use codex_app_server_protocol::CreditsSnapshot;
 use codex_app_server_protocol::GetAccountRateLimitsResponse;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::McpServerElicitationAction;
 use codex_app_server_protocol::McpServerElicitationRequestResponse;
+use codex_app_server_protocol::PermissionProfileSelectionParams;
+use codex_app_server_protocol::RateLimitReachedType;
+use codex_app_server_protocol::RateLimitSnapshot;
+use codex_app_server_protocol::RateLimitWindow;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ReviewStartParams;
 use codex_app_server_protocol::ReviewStartResponse;
@@ -220,6 +228,21 @@ struct ExecRunArgs {
     stderr_with_ansi: bool,
 }
 
+#[derive(Debug, Clone)]
+struct StatusLimitRow {
+    label: String,
+    summary: String,
+    resets_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct StatusBucket {
+    heading: Option<String>,
+    rows: Vec<StatusLimitRow>,
+    credits: Option<String>,
+    reached: Option<String>,
+}
+
 fn exec_root_span() -> tracing::Span {
     info_span!(
         "codex.exec",
@@ -235,6 +258,211 @@ fn exec_stderr_env_filter() -> EnvFilter {
     EnvFilter::try_from_default_env()
         .or_else(|_| EnvFilter::try_new(EXEC_DEFAULT_LOG_FILTER))
         .unwrap_or_else(|_| EnvFilter::new("error"))
+}
+
+fn format_status_response(response: &GetAccountRateLimitsResponse) -> String {
+    let now = Local::now();
+    let buckets = status_buckets(response, now);
+    let mut lines = vec!["Account status".to_string(), String::new()];
+
+    if buckets.is_empty() {
+        lines.push("No rate-limit data available yet.".to_string());
+    } else {
+        for (index, bucket) in buckets.iter().enumerate() {
+            if index > 0 {
+                lines.push(String::new());
+            }
+
+            if let Some(heading) = bucket.heading.as_ref() {
+                lines.push(format!("{heading}:"));
+            }
+
+            for row in &bucket.rows {
+                let mut line = format!("  {}: {}", row.label, row.summary);
+                if let Some(resets_at) = row.resets_at.as_ref() {
+                    line.push_str(&format!(" (resets {resets_at})"));
+                }
+                lines.push(line);
+            }
+
+            if let Some(credits) = bucket.credits.as_ref() {
+                lines.push(format!("  Credits: {credits}"));
+            }
+
+            if let Some(reached) = bucket.reached.as_ref() {
+                lines.push(format!("  State: {reached}"));
+            }
+        }
+    }
+
+    lines.push(String::new());
+    lines.push(
+        "Visit https://chatgpt.com/codex/settings/usage for up-to-date rate limits and credits."
+            .to_string(),
+    );
+    lines.join("\n")
+}
+
+fn status_buckets(
+    response: &GetAccountRateLimitsResponse,
+    now: DateTime<Local>,
+) -> Vec<StatusBucket> {
+    if let Some(by_limit_id) = response.rate_limits_by_limit_id.as_ref() {
+        let mut limit_ids: Vec<&String> = by_limit_id.keys().collect();
+        limit_ids.sort();
+        return limit_ids
+            .into_iter()
+            .filter_map(|limit_id| {
+                by_limit_id
+                    .get(limit_id)
+                    .map(|snapshot| status_bucket(snapshot, Some(limit_id.as_str()), now))
+            })
+            .collect();
+    }
+
+    vec![status_bucket(&response.rate_limits, None, now)]
+}
+
+fn status_bucket(
+    snapshot: &RateLimitSnapshot,
+    limit_id: Option<&str>,
+    now: DateTime<Local>,
+) -> StatusBucket {
+    let bucket_name = snapshot
+        .limit_name
+        .as_deref()
+        .or(limit_id)
+        .unwrap_or("codex");
+    let is_primary_bucket = bucket_name.eq_ignore_ascii_case("codex");
+
+    let mut rows = Vec::new();
+    if let Some(primary) = snapshot.primary.as_ref() {
+        rows.push(status_limit_row(
+            bucket_name,
+            primary,
+            true,
+            now,
+            is_primary_bucket,
+        ));
+    }
+    if let Some(secondary) = snapshot.secondary.as_ref() {
+        rows.push(status_limit_row(
+            bucket_name,
+            secondary,
+            false,
+            now,
+            is_primary_bucket,
+        ));
+    }
+
+    StatusBucket {
+        heading: (!is_primary_bucket).then(|| bucket_name.to_string()),
+        rows,
+        credits: snapshot.credits.as_ref().and_then(format_credits),
+        reached: snapshot
+            .rate_limit_reached_type
+            .map(format_limit_reached_type),
+    }
+}
+
+fn status_limit_row(
+    bucket_name: &str,
+    window: &RateLimitWindow,
+    primary: bool,
+    now: DateTime<Local>,
+    is_primary_bucket: bool,
+) -> StatusLimitRow {
+    let label = if is_primary_bucket {
+        format!(
+            "{} limit",
+            status_window_label(window.window_duration_mins, primary)
+        )
+    } else {
+        format!(
+            "{} {} limit",
+            bucket_name,
+            status_window_label(window.window_duration_mins, primary)
+        )
+    };
+    let percent_remaining = (100 - window.used_percent).clamp(0, 100);
+
+    StatusLimitRow {
+        label,
+        summary: format!("{percent_remaining}% left"),
+        resets_at: window
+            .resets_at
+            .and_then(|seconds| format_reset_time(seconds, now)),
+    }
+}
+
+fn status_window_label(window_duration_mins: Option<i64>, primary: bool) -> String {
+    match window_duration_mins {
+        Some(60) => "1h".to_string(),
+        Some(300) => "5h".to_string(),
+        Some(1_440) => "Daily".to_string(),
+        Some(10_080) => "Weekly".to_string(),
+        Some(minutes) if minutes > 0 && minutes % 1_440 == 0 => format!("{}d", minutes / 1_440),
+        Some(minutes) if minutes > 0 && minutes % 60 == 0 => format!("{}h", minutes / 60),
+        Some(minutes) if minutes > 0 => format!("{minutes}m"),
+        _ if primary => "5h".to_string(),
+        _ => "Weekly".to_string(),
+    }
+}
+
+fn format_reset_time(seconds: i64, now: DateTime<Local>) -> Option<String> {
+    let timestamp = DateTime::<Utc>::from_timestamp(seconds, 0)?.with_timezone(&Local);
+    let time = timestamp.format("%H:%M").to_string();
+    if timestamp.date_naive() == now.date_naive() {
+        Some(time)
+    } else {
+        Some(format!("{time} on {}", timestamp.format("%-d %b")))
+    }
+}
+
+fn format_credits(credits: &CreditsSnapshot) -> Option<String> {
+    if !credits.has_credits {
+        return None;
+    }
+    if credits.unlimited {
+        return Some("Unlimited".to_string());
+    }
+
+    let balance = credits.balance.as_deref()?.trim();
+    if balance.is_empty() {
+        return None;
+    }
+
+    if let Ok(int_value) = balance.parse::<i64>()
+        && int_value > 0
+    {
+        return Some(format!("{int_value} credits"));
+    }
+
+    if let Ok(float_value) = balance.parse::<f64>()
+        && float_value > 0.0
+    {
+        return Some(format!("{} credits", float_value.round() as i64));
+    }
+
+    None
+}
+
+fn format_limit_reached_type(reached: RateLimitReachedType) -> String {
+    match reached {
+        RateLimitReachedType::RateLimitReached => "rate limit reached".to_string(),
+        RateLimitReachedType::WorkspaceOwnerCreditsDepleted => {
+            "workspace owner credits depleted".to_string()
+        }
+        RateLimitReachedType::WorkspaceMemberCreditsDepleted => {
+            "workspace member credits depleted".to_string()
+        }
+        RateLimitReachedType::WorkspaceOwnerUsageLimitReached => {
+            "workspace owner usage limit reached".to_string()
+        }
+        RateLimitReachedType::WorkspaceMemberUsageLimitReached => {
+            "workspace member usage limit reached".to_string()
+        }
+    }
 }
 
 pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
@@ -917,7 +1145,7 @@ pub async fn run_status(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Resu
     if json_mode {
         println!("{}", serde_json::to_string(&response)?);
     } else {
-        println!("{}", serde_json::to_string_pretty(&response)?);
+        println!("{}", format_status_response(&response));
     }
 
     Ok(())

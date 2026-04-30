@@ -1,4 +1,9 @@
 use super::*;
+use codex_app_server_protocol::CreditsSnapshot;
+use codex_app_server_protocol::GetAccountRateLimitsResponse;
+use codex_app_server_protocol::RateLimitReachedType;
+use codex_app_server_protocol::RateLimitSnapshot;
+use codex_app_server_protocol::RateLimitWindow;
 use codex_otel::set_parent_from_w3c_trace_context;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::models::ActivePermissionProfile;
@@ -294,6 +299,103 @@ fn runtime_warnings_are_filtered_to_the_primary_thread() {
     });
 
     assert_eq!(outcomes, [true, true, false]);
+}
+
+#[test]
+fn format_status_response_renders_human_readable_summary() {
+    let response = GetAccountRateLimitsResponse {
+        rate_limits: RateLimitSnapshot {
+            limit_id: Some("codex".to_string()),
+            limit_name: Some("codex".to_string()),
+            primary: Some(RateLimitWindow {
+                used_percent: 45,
+                window_duration_mins: Some(300),
+                resets_at: Some(1_735_689_600),
+            }),
+            secondary: Some(RateLimitWindow {
+                used_percent: 30,
+                window_duration_mins: Some(10_080),
+                resets_at: Some(1_735_776_000),
+            }),
+            credits: Some(CreditsSnapshot {
+                has_credits: true,
+                unlimited: false,
+                balance: Some("37.5".to_string()),
+            }),
+            plan_type: None,
+            rate_limit_reached_type: Some(RateLimitReachedType::WorkspaceOwnerUsageLimitReached),
+        },
+        rate_limits_by_limit_id: None,
+    };
+
+    let rendered = format_status_response(&response);
+
+    assert!(rendered.contains("Account status"));
+    assert!(rendered.contains("5h limit: 55% left"));
+    assert!(rendered.contains("Weekly limit: 70% left"));
+    assert!(rendered.contains("Credits: 38 credits"));
+    assert!(rendered.contains("State: workspace owner usage limit reached"));
+    assert!(rendered.contains("chatgpt.com/codex/settings/usage"));
+}
+
+#[test]
+fn format_status_response_renders_multiple_buckets() {
+    let response = GetAccountRateLimitsResponse {
+        rate_limits: RateLimitSnapshot {
+            limit_id: Some("codex".to_string()),
+            limit_name: Some("codex".to_string()),
+            primary: None,
+            secondary: None,
+            credits: None,
+            plan_type: None,
+            rate_limit_reached_type: None,
+        },
+        rate_limits_by_limit_id: Some(std::collections::HashMap::from([
+            (
+                "codex".to_string(),
+                RateLimitSnapshot {
+                    limit_id: Some("codex".to_string()),
+                    limit_name: Some("codex".to_string()),
+                    primary: Some(RateLimitWindow {
+                        used_percent: 10,
+                        window_duration_mins: Some(300),
+                        resets_at: None,
+                    }),
+                    secondary: None,
+                    credits: None,
+                    plan_type: None,
+                    rate_limit_reached_type: None,
+                },
+            ),
+            (
+                "codex-other".to_string(),
+                RateLimitSnapshot {
+                    limit_id: Some("codex-other".to_string()),
+                    limit_name: Some("codex-other".to_string()),
+                    primary: Some(RateLimitWindow {
+                        used_percent: 20,
+                        window_duration_mins: Some(60),
+                        resets_at: None,
+                    }),
+                    secondary: None,
+                    credits: Some(CreditsSnapshot {
+                        has_credits: true,
+                        unlimited: true,
+                        balance: None,
+                    }),
+                    plan_type: None,
+                    rate_limit_reached_type: None,
+                },
+            ),
+        ])),
+    };
+
+    let rendered = format_status_response(&response);
+
+    assert!(rendered.contains("5h limit: 90% left"));
+    assert!(rendered.contains("codex-other:"));
+    assert!(rendered.contains("codex-other 1h limit: 80% left"));
+    assert!(rendered.contains("Credits: Unlimited"));
 }
 
 #[tokio::test]
