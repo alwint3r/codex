@@ -71,6 +71,7 @@ EXPECTED_TYPES_EXPORTS = [
     "CancelLoginAccountResponse",
     "CancelLoginAccountStatus",
     "GetAccountResponse",
+    "GetAccountRateLimitsResponse",
     "InitializeResponse",
     "JsonObject",
     "ModelListResponse",
