@@ -71,6 +71,7 @@ Properties/methods:
 - `thread_fork(thread_id: str, *, approval_mode=ApprovalMode.auto_review, base_instructions=None, config=None, cwd=None, developer_instructions=None, model=None, model_provider=None, sandbox: Sandbox | None = None) -> Thread`
 - `thread_archive(thread_id: str) -> ThreadArchiveResponse`
 - `thread_unarchive(thread_id: str) -> Thread`
+- `account_rate_limits() -> GetAccountRateLimitsResponse`
 - `models(*, include_hidden: bool = False) -> ModelListResponse`
 
 Context manager:
@@ -111,6 +112,7 @@ Properties/methods:
 - `thread_fork(thread_id: str, *, approval_mode=ApprovalMode.auto_review, base_instructions=None, config=None, cwd=None, developer_instructions=None, ephemeral=None, model=None, model_provider=None, sandbox: Sandbox | None = None) -> Awaitable[AsyncThread]`
 - `thread_archive(thread_id: str) -> Awaitable[ThreadArchiveResponse]`
 - `thread_unarchive(thread_id: str) -> Awaitable[AsyncThread]`
+- `account_rate_limits() -> Awaitable[GetAccountRateLimitsResponse]`
 - `models(*, include_hidden: bool = False) -> Awaitable[ModelListResponse]`
 
 Async context manager:

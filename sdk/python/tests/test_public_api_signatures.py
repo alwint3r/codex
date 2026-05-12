@@ -527,6 +527,11 @@ def test_lifecycle_methods_are_codex_scoped() -> None:
     assert not hasattr(AsyncThread, "archive")
     assert not hasattr(AsyncThread, "unarchive")
 
+
+def test_account_rate_limits_is_exposed_on_codex_surfaces() -> None:
+    assert hasattr(Codex, "account_rate_limits")
+    assert hasattr(AsyncCodex, "account_rate_limits")
+
     for fn in (
         Codex.thread_archive,
         Codex.thread_unarchive,

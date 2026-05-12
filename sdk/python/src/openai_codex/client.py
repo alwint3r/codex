@@ -30,6 +30,7 @@ from .generated.v2_all import (
     LoginAccountParams as V2LoginAccountParams,
     LoginAccountResponse,
     LogoutAccountResponse,
+    GetAccountRateLimitsResponse,
     ModelListResponse,
     ThreadArchiveResponse,
     ThreadCompactStartResponse,
@@ -666,6 +667,13 @@ class CodexClient:
             "model/list",
             {"includeHidden": include_hidden},
             response_model=ModelListResponse,
+        )
+
+    def account_rate_limits(self) -> GetAccountRateLimitsResponse:
+        return self.request(
+            "account/rateLimits/read",
+            {},
+            response_model=GetAccountRateLimitsResponse,
         )
 
     def request_with_retry_on_overload(

@@ -19,6 +19,7 @@ from .generated.v2_all import (
     LoginAccountParams as V2LoginAccountParams,
     LoginAccountResponse,
     LogoutAccountResponse,
+    GetAccountRateLimitsResponse,
     ModelListResponse,
     ThreadArchiveResponse,
     ThreadCompactStartResponse,
@@ -311,6 +312,9 @@ class AsyncCodexClient:
     async def model_list(self, include_hidden: bool = False) -> ModelListResponse:
         """List models using the wrapped sync client."""
         return await self._call_sync(self._sync.model_list, include_hidden)
+
+    async def account_rate_limits(self) -> GetAccountRateLimitsResponse:
+        return await self._call_sync(self._sync.account_rate_limits)
 
     async def request_with_retry_on_overload(
         self,

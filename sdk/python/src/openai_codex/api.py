@@ -45,6 +45,10 @@ from .generated.v2_all import (
     GetAccountParams,
     GetAccountResponse,
     LoginAccountParams,
+    ApprovalsReviewer,
+    AskForApproval,
+    AskForApprovalValue,
+    GetAccountRateLimitsResponse,
     ModelListResponse,
     Personality,
     ReasoningEffort,
@@ -282,6 +286,9 @@ class Codex:
     def models(self, *, include_hidden: bool = False) -> ModelListResponse:
         """List available models reported by Codex."""
         return self._client.model_list(include_hidden=include_hidden)
+
+    def account_rate_limits(self) -> GetAccountRateLimitsResponse:
+        return self._client.account_rate_limits()
 
 
 class AsyncCodex:
@@ -528,6 +535,10 @@ class AsyncCodex:
     async def models(self, *, include_hidden: bool = False) -> ModelListResponse:
         await self._ensure_initialized()
         return await self._client.model_list(include_hidden=include_hidden)
+
+    async def account_rate_limits(self) -> GetAccountRateLimitsResponse:
+        await self._ensure_initialized()
+        return await self._client.account_rate_limits()
 
 
 @dataclass(slots=True)
