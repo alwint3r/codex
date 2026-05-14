@@ -1046,6 +1046,7 @@ pub async fn run_status(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Resu
         ephemeral: None,
         bypass_hook_trust: None,
         additional_writable_roots: add_dir,
+        ..Default::default()
     };
 
     let config = ConfigBuilder::default()
