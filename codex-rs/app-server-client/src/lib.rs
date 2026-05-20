@@ -56,7 +56,6 @@ pub use codex_core::otel_init::build_provider as build_otel_provider;
 use codex_core::personality_migration::PersonalityMigrationStatus;
 use codex_core::personality_migration::maybe_migrate_personality;
 pub use codex_exec_server::EnvironmentManager;
-pub use codex_exec_server::EnvironmentManagerArgs;
 pub use codex_exec_server::ExecServerRuntimePaths;
 use codex_feedback::CodexFeedback;
 use codex_protocol::protocol::SessionSource;

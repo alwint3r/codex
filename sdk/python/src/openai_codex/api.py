@@ -43,12 +43,9 @@ from .client import CodexClient, CodexConfig
 from .generated.v2_all import (
     ApiKeyLoginAccountParams,
     GetAccountParams,
+    GetAccountRateLimitsResponse,
     GetAccountResponse,
     LoginAccountParams,
-    ApprovalsReviewer,
-    AskForApproval,
-    AskForApprovalValue,
-    GetAccountRateLimitsResponse,
     ModelListResponse,
     Personality,
     ReasoningEffort,
