@@ -28,6 +28,17 @@ class FakeChildProcess extends EventEmitter {
   }
 }
 
+function createStdoutChild(stdout: string): FakeChildProcess {
+  const child = new FakeChildProcess();
+  setImmediate(() => {
+    child.stdout.write(stdout);
+    child.stdout.end();
+    child.stderr.end();
+    child.emit("exit", 0, null);
+  });
+  return child;
+}
+
 function createEarlyExitChild(exitCode = 2): FakeChildProcess {
   const child = new FakeChildProcess();
   setImmediate(() => {
@@ -197,5 +208,19 @@ describe("CodexExec", () => {
     prependPathDirs(env, [pathDir], "win32");
 
     expect(env).toEqual({ Path: `${pathDir}${path.delimiter}C\\Windows` });
+	});
+
+  it("reads status json", async () => {
+    const { CodexExec } = await import("../src/exec");
+    spawnMock.mockClear();
+    const child = createStdoutChild('{"rateLimits":{"primary":{"usedPercent":42}}}');
+    spawnMock.mockReturnValue(child as unknown as child_process.ChildProcess);
+
+    const exec = new CodexExec("codex");
+    const result = await exec.status();
+
+    expect(result).toBe('{"rateLimits":{"primary":{"usedPercent":42}}}');
+    const commandArgs = spawnMock.mock.calls[0]?.[1] as string[] | undefined;
+    expect(commandArgs).toEqual(["status", "--json"]);
   });
 });

@@ -40,6 +40,11 @@ export type CodexExecArgs = {
   approvalPolicy?: ApprovalMode;
 };
 
+export type CodexStatusArgs = {
+  baseUrl?: string;
+  apiKey?: string;
+};
+
 const INTERNAL_ORIGINATOR_ENV = "CODEX_INTERNAL_ORIGINATOR_OVERRIDE";
 const TYPESCRIPT_SDK_ORIGINATOR = "codex_sdk_ts";
 const CODEX_NPM_NAME = "@openai/codex";
@@ -240,6 +245,72 @@ export class CodexExec {
         // ignore
       }
     }
+  }
+
+  async status(args: CodexStatusArgs = {}): Promise<string> {
+    const commandArgs: string[] = ["status", "--json"];
+
+    if (this.configOverrides) {
+      for (const override of serializeConfigOverrides(this.configOverrides)) {
+        commandArgs.push("--config", override);
+      }
+    }
+
+    if (args.baseUrl) {
+      commandArgs.push("--config", `openai_base_url=${toTomlValue(args.baseUrl, "openai_base_url")}`);
+    }
+
+    const env: Record<string, string> = {};
+    if (this.envOverride) {
+      Object.assign(env, this.envOverride);
+    } else {
+      for (const [key, value] of Object.entries(process.env)) {
+        if (value !== undefined) {
+          env[key] = value;
+        }
+      }
+    }
+    if (!env[INTERNAL_ORIGINATOR_ENV]) {
+      env[INTERNAL_ORIGINATOR_ENV] = TYPESCRIPT_SDK_ORIGINATOR;
+    }
+    if (args.apiKey) {
+      env.CODEX_API_KEY = args.apiKey;
+    }
+
+    const child = spawn(this.executablePath, commandArgs, { env });
+
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+
+    if (child.stdout) {
+      child.stdout.on("data", (data) => {
+        stdoutChunks.push(data);
+      });
+    }
+
+    if (child.stderr) {
+      child.stderr.on("data", (data) => {
+        stderrChunks.push(data);
+      });
+    }
+
+    const spawnResult = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", (code, signal) => resolve({ code, signal }));
+      },
+    );
+
+    if (spawnResult.code !== 0 || spawnResult.signal) {
+      const detail = spawnResult.signal
+        ? `signal ${spawnResult.signal}`
+        : `code ${spawnResult.code ?? 1}`;
+      throw new Error(
+        `Codex status exited with ${detail}: ${Buffer.concat(stderrChunks).toString("utf8")}`,
+      );
+    }
+
+    return Buffer.concat(stdoutChunks).toString("utf8").trim();
   }
 }
 

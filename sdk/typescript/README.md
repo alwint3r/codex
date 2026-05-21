@@ -50,6 +50,24 @@ for await (const event of events) {
 }
 ```
 
+### Usage limits
+
+Use `status()` to read the current usage limits that power the CLI `/status` view.
+
+```typescript
+const limits = await codex.status();
+
+console.log(limits.rateLimits.primary?.percentLeft);
+console.log(limits.rateLimits.primary?.resetDate);
+```
+
+Each returned window includes:
+
+- `usedPercent`: how much of the window is consumed
+- `percentLeft`: `100 - usedPercent`
+- `resetsAt`: Unix timestamp in seconds
+- `resetDate`: JavaScript `Date` derived from `resetsAt`
+
 ### Structured output
 
 The Codex agent can produce a JSON response that conforms to a specified schema. The schema can be provided for each turn as a plain JSON object.

@@ -163,6 +163,9 @@ enum Subcommand {
     /// Diagnose local Codex installation, config, auth, and runtime health.
     Doctor(DoctorCommand),
 
+    /// Show account usage limits and related status.
+    Status(StatusCommand),
+
     /// Run commands within a Codex-provided sandbox.
     Sandbox(HostSandboxArgs),
 
@@ -216,6 +219,16 @@ struct CompletionCommand {
     /// Shell to generate completions for
     #[clap(value_enum, default_value_t = Shell::Bash)]
     shell: Shell,
+}
+
+#[derive(Debug, Parser)]
+struct StatusCommand {
+    #[clap(skip)]
+    config_overrides: CliConfigOverrides,
+
+    /// Print machine-readable JSON.
+    #[arg(long = "json", default_value_t = false)]
+    json: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -1421,6 +1434,24 @@ async fn cli_main(
                 &arg0_paths,
             )
             .await?;
+        }
+        Some(Subcommand::Status(mut status_cli)) => {
+            reject_remote_mode_for_subcommand(
+                root_remote.as_deref(),
+                root_remote_auth_token_env.as_deref(),
+                "status",
+            )?;
+            prepend_config_flags(
+                &mut status_cli.config_overrides,
+                root_config_overrides.clone(),
+            );
+            let mut exec_cli = ExecCli::try_parse_from(["codex", "exec"])?;
+            exec_cli
+                .shared
+                .inherit_exec_root_options(&interactive.shared);
+            exec_cli.json = status_cli.json;
+            exec_cli.config_overrides = status_cli.config_overrides;
+            codex_exec::run_status(exec_cli, arg0_paths.clone()).await?;
         }
         Some(Subcommand::Cloud(mut cloud_cli)) => {
             reject_remote_mode_for_subcommand(
@@ -3992,6 +4023,16 @@ mod tests {
             panic!("expected features disable");
         };
         assert_eq!(feature, "shell_tool");
+    }
+
+    #[test]
+    fn status_parses_json_flag() {
+        let cli = MultitoolCli::try_parse_from(["codex", "status", "--json"])
+            .expect("parse should succeed");
+        let Some(Subcommand::Status(status)) = cli.subcommand else {
+            panic!("expected status subcommand");
+        };
+        assert_eq!(status.json, true);
     }
 
     #[test]

@@ -27,6 +27,14 @@ export { Thread } from "./thread";
 export type { RunResult, RunStreamedResult, Input, UserInput } from "./thread";
 
 export { Codex } from "./codex";
+export type {
+  CreditsSnapshot,
+  PlanType,
+  RateLimitReachedType,
+  RateLimitWindow,
+  UsageLimit,
+  UsageLimits,
+} from "./status";
 
 export type { CodexOptions } from "./codexOptions";
 

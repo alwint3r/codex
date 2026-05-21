@@ -21,6 +21,7 @@ use codex_app_server_client::InProcessClientStartArgs;
 use codex_app_server_client::InProcessServerEvent;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::ConfigWarningNotification;
+use codex_app_server_protocol::GetAccountRateLimitsResponse;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::McpServerElicitationAction;
 use codex_app_server_protocol::McpServerElicitationRequestResponse;
@@ -571,6 +572,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         opt_out_notification_methods: Vec::new(),
         channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
     };
+
     run_exec_session(ExecRunArgs {
         in_process_start_args,
         state_db,
@@ -665,6 +667,260 @@ async fn load_bootstrap_config_or_exit(
             std::process::exit(1);
         }
     }
+}
+
+#[allow(clippy::print_stdout, clippy::print_stderr)]
+pub async fn run_status(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
+    let Cli {
+        strict_config,
+        shared,
+        ignore_user_config,
+        ignore_rules,
+        removed_full_auto,
+        json: json_mode,
+        config_overrides,
+        ..
+    } = cli;
+    let shared = shared.into_inner();
+    let SharedCliOptions {
+        model: model_cli_arg,
+        oss,
+        oss_provider,
+        config_profile_v2,
+        sandbox_mode: sandbox_mode_cli_arg,
+        dangerously_bypass_approvals_and_sandbox,
+        cwd,
+        add_dir,
+        ..
+    } = shared;
+
+    let sandbox_mode = if removed_full_auto {
+        Some(SandboxMode::WorkspaceWrite)
+    } else if dangerously_bypass_approvals_and_sandbox {
+        Some(SandboxMode::DangerFullAccess)
+    } else {
+        sandbox_mode_cli_arg.map(Into::<SandboxMode>::into)
+    };
+
+    let cli_kv_overrides = match config_overrides.parse_overrides() {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Error parsing -c overrides: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let resolved_cwd = cwd.clone();
+    let config_cwd = match resolved_cwd.as_deref() {
+        Some(path) => {
+            AbsolutePathBuf::from_absolute_path(canonicalize_existing_preserving_symlinks(path)?)?
+        }
+        None => AbsolutePathBuf::current_dir()?,
+    };
+
+    let codex_home = match find_codex_home() {
+        Ok(codex_home) => codex_home,
+        Err(err) => {
+            eprintln!("Error finding codex home: {err}");
+            std::process::exit(1);
+        }
+    };
+    let user_config_path = config_profile_v2
+        .as_ref()
+        .map(|profile_v2| resolve_profile_v2_config_path(&codex_home, profile_v2));
+    let loader_overrides = LoaderOverrides {
+        user_config_path,
+        user_config_profile: config_profile_v2,
+        ignore_user_config,
+        ignore_user_and_project_exec_policy_rules: ignore_rules,
+        ..Default::default()
+    };
+
+    let config_toml = load_config_toml_or_exit(
+        &codex_home,
+        Some(&config_cwd),
+        cli_kv_overrides.clone(),
+        loader_overrides.clone(),
+        strict_config,
+        CloudConfigBundleLoader::default(),
+    )
+    .await;
+
+    let chatgpt_base_url = config_toml
+        .chatgpt_base_url
+        .clone()
+        .unwrap_or_else(|| "https://chatgpt.com/backend-api/".to_string());
+    let cloud_config_bundle = cloud_config_bundle_loader_for_storage(
+        codex_home.to_path_buf(),
+        /*enable_codex_api_key_env*/ false,
+        config_toml.cli_auth_credentials_store.unwrap_or_default(),
+        chatgpt_base_url,
+    )
+    .await;
+
+    let model_provider = if oss {
+        let config_toml_with_cloud_config = load_config_toml_or_exit(
+            &codex_home,
+            Some(&config_cwd),
+            cli_kv_overrides.clone(),
+            loader_overrides.clone(),
+            strict_config,
+            cloud_config_bundle.clone(),
+        )
+        .await;
+        let resolved =
+            resolve_oss_provider(oss_provider.as_deref(), &config_toml_with_cloud_config);
+        if let Some(provider) = resolved {
+            Some(provider)
+        } else {
+            return Err(anyhow::anyhow!(
+                "No default OSS provider configured. Use --local-provider=provider or set oss_provider to one of: {LMSTUDIO_OSS_PROVIDER_ID}, {OLLAMA_OSS_PROVIDER_ID} in config.toml"
+            ));
+        }
+    } else {
+        None
+    };
+
+    let model = if let Some(model) = model_cli_arg {
+        Some(model)
+    } else if oss {
+        model_provider
+            .as_ref()
+            .and_then(|provider_id| get_default_model_for_oss_provider(provider_id))
+            .map(std::borrow::ToOwned::to_owned)
+    } else {
+        None
+    };
+
+    let overrides = ConfigOverrides {
+        model,
+        review_model: None,
+        approval_policy: Some(AskForApproval::Never),
+        approvals_reviewer: None,
+        sandbox_mode,
+        permission_profile: None,
+        default_permissions: None,
+        cwd: resolved_cwd,
+        workspace_roots: None,
+        model_provider: model_provider.clone(),
+        service_tier: None,
+        codex_self_exe: arg0_paths.codex_self_exe.clone(),
+        codex_linux_sandbox_exe: arg0_paths.codex_linux_sandbox_exe.clone(),
+        main_execve_wrapper_exe: arg0_paths.main_execve_wrapper_exe.clone(),
+        default_zsh_path: None,
+        base_instructions: None,
+        developer_instructions: None,
+        personality: None,
+        compact_prompt: None,
+        show_raw_agent_reasoning: oss.then_some(true),
+        tools_web_search_request: None,
+        ephemeral: None,
+        bypass_hook_trust: None,
+        additional_writable_roots: add_dir,
+    };
+
+    let config = ConfigBuilder::default()
+        .codex_home(codex_home.to_path_buf())
+        .cli_overrides(cli_kv_overrides.clone())
+        .harness_overrides(overrides)
+        .loader_overrides(loader_overrides.clone())
+        .strict_config(strict_config)
+        .cloud_config_bundle(cloud_config_bundle.clone())
+        .build()
+        .await?;
+
+    match check_execpolicy_for_warnings(&config.config_layer_stack).await {
+        Ok(None) => {}
+        Ok(Some(err)) | Err(err) => {
+            eprintln!(
+                "Error loading rules:\n{}",
+                format_exec_policy_error_with_source(&err)
+            );
+            std::process::exit(1);
+        }
+    }
+
+    set_default_client_residency_requirement(config.enforce_residency.value());
+
+    if let Err(err) = enforce_login_restrictions(&AuthConfig {
+        codex_home: config.codex_home.to_path_buf(),
+        auth_credentials_store_mode: config.cli_auth_credentials_store_mode,
+        forced_login_method: config.forced_login_method,
+        forced_chatgpt_workspace_id: config.forced_chatgpt_workspace_id.clone(),
+        chatgpt_base_url: Some(config.chatgpt_base_url.clone()),
+    })
+    .await
+    {
+        eprintln!("{err}");
+        std::process::exit(1);
+    }
+
+    let config_warnings: Vec<ConfigWarningNotification> = config
+        .startup_warnings
+        .iter()
+        .map(|warning| ConfigWarningNotification {
+            summary: warning.clone(),
+            details: None,
+            path: None,
+            range: None,
+        })
+        .collect();
+    let local_runtime_paths = ExecServerRuntimePaths::from_optional_paths(
+        arg0_paths.codex_self_exe.clone(),
+        arg0_paths.codex_linux_sandbox_exe.clone(),
+    )?;
+    let state_db = codex_core::init_state_db(&config).await;
+    let environment_manager = if loader_overrides.ignore_user_config {
+        EnvironmentManager::from_env(Some(local_runtime_paths)).await?
+    } else {
+        EnvironmentManager::from_codex_home(config.codex_home.clone(), Some(local_runtime_paths))
+            .await?
+    };
+    let in_process_start_args = InProcessClientStartArgs {
+        arg0_paths,
+        config: std::sync::Arc::new(config),
+        cli_overrides: cli_kv_overrides,
+        loader_overrides,
+        strict_config,
+        cloud_config_bundle,
+        feedback: CodexFeedback::new(),
+        log_db: None,
+        state_db,
+        environment_manager: std::sync::Arc::new(environment_manager),
+        config_warnings,
+        session_source: SessionSource::Exec,
+        enable_codex_api_key_env: true,
+        client_name: "codex_exec".to_string(),
+        client_version: env!("CARGO_PKG_VERSION").to_string(),
+        experimental_api: true,
+        opt_out_notification_methods: Vec::new(),
+        channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+    };
+
+    let client = InProcessAppServerClient::start(in_process_start_args)
+        .await
+        .map_err(|err| {
+            anyhow::anyhow!("failed to initialize in-process app-server client: {err}")
+        })?;
+    let mut request_ids = RequestIdSequencer::new();
+    let response: GetAccountRateLimitsResponse = send_request_with_response(
+        &client,
+        ClientRequest::GetAccountRateLimits {
+            request_id: request_ids.next(),
+            params: None,
+        },
+        "account/rateLimits/read",
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
+
+    if json_mode {
+        println!("{}", serde_json::to_string(&response)?);
+    } else {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+    }
+
+    Ok(())
 }
 
 async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {

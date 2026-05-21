@@ -1,5 +1,6 @@
 import { CodexOptions } from "./codexOptions";
 import { CodexExec } from "./exec";
+import { parseUsageLimits, UsageLimits } from "./status";
 import { Thread } from "./thread";
 import { ThreadOptions } from "./threadOptions";
 
@@ -35,5 +36,16 @@ export class Codex {
    */
   resumeThread(id: string, options: ThreadOptions = {}): Thread {
     return new Thread(this.exec, this.options, options, id);
+  }
+
+  /**
+   * Reads the current account usage limits that power the CLI `/status` view.
+   */
+  async status(): Promise<UsageLimits> {
+    const raw = await this.exec.status({
+      baseUrl: this.options.baseUrl,
+      apiKey: this.options.apiKey,
+    });
+    return parseUsageLimits(raw);
   }
 }
