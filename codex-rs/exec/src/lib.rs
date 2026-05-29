@@ -986,17 +986,23 @@ pub async fn run_status(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Resu
     .await;
 
     let model_provider = if oss {
-        let config_toml_with_cloud_config = load_config_toml_or_exit(
-            &codex_home,
-            Some(&config_cwd),
-            cli_kv_overrides.clone(),
-            loader_overrides.clone(),
-            strict_config,
-            cloud_config_bundle.clone(),
-        )
-        .await;
-        let resolved =
-            resolve_oss_provider(oss_provider.as_deref(), &config_toml_with_cloud_config);
+        let config_toml_with_cloud_config;
+        let config_toml_for_oss = if oss_provider.is_none() {
+            config_toml_with_cloud_config = load_config_toml_or_exit(
+                &codex_home,
+                Some(&config_cwd),
+                cli_kv_overrides.clone(),
+                loader_overrides.clone(),
+                strict_config,
+                cloud_config_bundle.clone(),
+            )
+            .await;
+            &config_toml_with_cloud_config
+        } else {
+            &config_toml
+        };
+
+        let resolved = resolve_oss_provider(oss_provider.as_deref(), config_toml_for_oss);
         if let Some(provider) = resolved {
             Some(provider)
         } else {
