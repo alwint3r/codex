@@ -322,10 +322,12 @@ fn format_status_response_renders_human_readable_summary() {
                 unlimited: false,
                 balance: Some("37.5".to_string()),
             }),
+            individual_limit: None,
             plan_type: None,
             rate_limit_reached_type: Some(RateLimitReachedType::WorkspaceOwnerUsageLimitReached),
         },
         rate_limits_by_limit_id: None,
+        rate_limit_reset_credits: None,
     };
 
     let rendered = format_status_response(&response);
@@ -347,6 +349,7 @@ fn format_status_response_renders_multiple_buckets() {
             primary: None,
             secondary: None,
             credits: None,
+            individual_limit: None,
             plan_type: None,
             rate_limit_reached_type: None,
         },
@@ -363,6 +366,7 @@ fn format_status_response_renders_multiple_buckets() {
                     }),
                     secondary: None,
                     credits: None,
+                    individual_limit: None,
                     plan_type: None,
                     rate_limit_reached_type: None,
                 },
@@ -383,11 +387,13 @@ fn format_status_response_renders_multiple_buckets() {
                         unlimited: true,
                         balance: None,
                     }),
+                    individual_limit: None,
                     plan_type: None,
                     rate_limit_reached_type: None,
                 },
             ),
         ])),
+        rate_limit_reset_credits: None,
     };
 
     let rendered = format_status_response(&response);

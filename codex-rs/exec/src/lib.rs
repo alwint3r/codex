@@ -963,7 +963,7 @@ pub async fn run_status(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Resu
         ..Default::default()
     };
 
-    let config_toml = load_config_toml_or_exit(
+    let bootstrap_config = load_bootstrap_config_or_exit(
         &codex_home,
         Some(&config_cwd),
         cli_kv_overrides.clone(),
@@ -972,23 +972,27 @@ pub async fn run_status(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Resu
         CloudConfigBundleLoader::default(),
     )
     .await;
+    let bootstrap_config_toml = &bootstrap_config.config_toml;
 
-    let chatgpt_base_url = config_toml
+    let chatgpt_base_url = bootstrap_config_toml
         .chatgpt_base_url
         .clone()
         .unwrap_or_else(|| "https://chatgpt.com/backend-api/".to_string());
     let cloud_config_bundle = cloud_config_bundle_loader_for_storage(
         codex_home.to_path_buf(),
         /*enable_codex_api_key_env*/ false,
-        config_toml.cli_auth_credentials_store.unwrap_or_default(),
+        bootstrap_config_toml
+            .cli_auth_credentials_store
+            .unwrap_or_default(),
+        resolve_bootstrap_auth_keyring_backend_kind(&bootstrap_config)?,
         chatgpt_base_url,
     )
     .await;
 
     let model_provider = if oss {
-        let config_toml_with_cloud_config;
+        let bootstrap_config_with_cloud_config;
         let config_toml_for_oss = if oss_provider.is_none() {
-            config_toml_with_cloud_config = load_config_toml_or_exit(
+            bootstrap_config_with_cloud_config = load_bootstrap_config_or_exit(
                 &codex_home,
                 Some(&config_cwd),
                 cli_kv_overrides.clone(),
@@ -997,9 +1001,9 @@ pub async fn run_status(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Resu
                 cloud_config_bundle.clone(),
             )
             .await;
-            &config_toml_with_cloud_config
+            &bootstrap_config_with_cloud_config.config_toml
         } else {
-            &config_toml
+            bootstrap_config_toml
         };
 
         let resolved = resolve_oss_provider(oss_provider.as_deref(), config_toml_for_oss);
@@ -1050,7 +1054,6 @@ pub async fn run_status(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Resu
         ephemeral: None,
         bypass_hook_trust: None,
         additional_writable_roots: add_dir,
-        ..Default::default()
     };
 
     let config = ConfigBuilder::default()
@@ -1079,6 +1082,7 @@ pub async fn run_status(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Resu
     if let Err(err) = enforce_login_restrictions(&AuthConfig {
         codex_home: config.codex_home.to_path_buf(),
         auth_credentials_store_mode: config.cli_auth_credentials_store_mode,
+        keyring_backend_kind: config.auth_keyring_backend_kind(),
         forced_login_method: config.forced_login_method,
         forced_chatgpt_workspace_id: config.forced_chatgpt_workspace_id.clone(),
         chatgpt_base_url: Some(config.chatgpt_base_url.clone()),
@@ -1127,6 +1131,7 @@ pub async fn run_status(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Resu
         client_name: "codex_exec".to_string(),
         client_version: env!("CARGO_PKG_VERSION").to_string(),
         experimental_api: true,
+        mcp_server_openai_form_elicitation: false,
         opt_out_notification_methods: Vec::new(),
         channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
     };
