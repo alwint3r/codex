@@ -978,6 +978,14 @@ pub async fn run_status(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Resu
         .chatgpt_base_url
         .clone()
         .unwrap_or_else(|| "https://chatgpt.com/backend-api/".to_string());
+    let auth_route_config = resolve_bootstrap_auth_route_config(
+        bootstrap_config_toml,
+        bootstrap_config
+            .config_layer_stack
+            .requirements()
+            .feature_requirements
+            .as_ref(),
+    )?;
     let cloud_config_bundle = cloud_config_bundle_loader_for_storage(
         codex_home.to_path_buf(),
         /*enable_codex_api_key_env*/ false,
@@ -986,6 +994,7 @@ pub async fn run_status(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Resu
             .unwrap_or_default(),
         resolve_bootstrap_auth_keyring_backend_kind(&bootstrap_config)?,
         chatgpt_base_url,
+        auth_route_config,
     )
     .await;
 
@@ -1079,6 +1088,7 @@ pub async fn run_status(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Resu
 
     set_default_client_residency_requirement(config.enforce_residency.value());
 
+    let auth_route_config = config.auth_route_config();
     if let Err(err) = enforce_login_restrictions(&AuthConfig {
         codex_home: config.codex_home.to_path_buf(),
         auth_credentials_store_mode: config.cli_auth_credentials_store_mode,
@@ -1086,6 +1096,7 @@ pub async fn run_status(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Resu
         forced_login_method: config.forced_login_method,
         forced_chatgpt_workspace_id: config.forced_chatgpt_workspace_id.clone(),
         chatgpt_base_url: Some(config.chatgpt_base_url.clone()),
+        auth_route_config,
     })
     .await
     {
